@@ -1,31 +1,51 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Transformer(nn.Module):
-    def __init__(self):
+    def __init__(self, name):
         super(Transformer, self).__init__()
 
+        self.name = name
+
         """ Transformer Parameter """
-        self.c_w = nn.Parameter(torch.tensor([0.4]))
+        self.c_w = nn.Parameter(torch.tensor([0.2]))
         self.d_w = nn.Parameter(torch.tensor([0.2]))
 
         self.alpha_w = None
         self.beta_w = None
 
         # TODO: gamma를 고정할것인지 학습할것인지는 선택 가능.
-        self.gamma = nn.Parameter(torch.Tensor([1.0]))
+        self.gamma = nn.Parameter(torch.Tensor([5.0]))
 
-    def forward(self, weight):
+    def forward(self, x):
 
-        self.alpha_w = 0.5 / self.d_w
-        self.beta_w = -0.5 * self.c_w / self.d_w + 0.5
+        self.alpha = 0.5 / self.d_w
+        self.beta = -0.5 * self.c_w / self.d_w + 0.5
 
         """ transformer T_w Eq(3) """
-        hat_w = torch.where(torch.abs(weight) < self.c_w - self.d_w, torch.tensor(0.0),
-                            torch.where(torch.abs(weight) > self.c_w + self.d_w, torch.sign(weight),
-                            torch.pow(self.alpha_w * torch.abs(weight) + self.beta_w, self.gamma) * torch.sign(weight)))
+        if self.name == 'weight':
+            return self._weight_transform(x)
+        elif self.name == 'activation':
+            return self._activation_transform(x)
+        else:
+            raise NotImplementedError()
+
+    def _weight_transform(self, weight):
+
+        hat_w = torch.where(torch.lt(torch.abs(weight), (self.c_w - self.d_w)), torch.tensor(0.0, device=0),
+                            torch.where(torch.gt(torch.abs(weight), (self.c_w + self.d_w)), torch.sign(weight),
+                                        torch.pow(self.alpha * torch.abs(weight) + self.beta,
+                                                  self.gamma) * torch.sign(weight)))
         return hat_w
+
+    def _activation_transform(self, x):
+
+        hat_x = torch.where(torch.lt(x, self.c_w - self.d_w), torch.tensor(0.0, device=0),
+                            torch.where(torch.gt(x, (self.c_w + self.d_w)), torch.tensor(1.0, device=0),
+                                        self.alpha * x + self.beta))
+        return hat_x
 
 
 class Discretizer(torch.autograd.Function):
@@ -43,16 +63,40 @@ class Discretizer(torch.autograd.Function):
         return grad_outputs, None
 
 
-class Quantizer(torch.autograd.Function):
-    pass
+class Quantizer(nn.Module):
+    def __init__(self, bit, name):
+        super(Quantizer, self).__init__()
+        self.bit = bit
+        self.transformer = Transformer(name)
+
+    def forward(self, x):
+
+        transform_x = self.transformer(x)
+        quantized_x = Discretizer.apply(transform_x, self.bit)
+
+        return quantized_x
 
 
 class Quant_Conv2d(nn.Conv2d):
-    pass
+    def __init__(self, in_channel, out_channel, kernel_size,
+                 stride=1, padding=0, dilation=1, groups=1, bias=True, bits=32):
+        super(Quant_Conv2d, self).__init__(
+            in_channel, out_channel, kernel_size, stride, padding, dilation, groups, bias)
+        self.quantized_weight = Quantizer(bits, 'weight')
+
+    def forward(self, x):
+
+        w_q = self.quantized_weight(self.weight)
+        return F.conv2d(x, w_q, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 
 class Quant_Activation(nn.Module):
-    pass
+    def __init__(self, bits):
+        super(Quant_Activation, self).__init__()
+        self.quantized_activation = Quantizer(bits, 'activation')
+
+    def forward(self, x):
+        return self.quantized_activation(x)
 
 
 if __name__ == '__main__':
@@ -65,18 +109,26 @@ if __name__ == '__main__':
     seed_number = 1
     torch.manual_seed(seed_number)
     random.seed(seed_number)
-    transformer = Transformer()
+    transformer = Transformer(name='activation')
     bits = 3
-    weight = torch.normal(0, 1.5, (1, 2000))
+    inputs = torch.normal(0, 1.5, (3, 3, 28, 28))
 
-    print('weight', weight)
-    t_w = transformer(weight)
-    print('t_w', t_w)
-    d_w = Discretizer.apply(t_w, bits)
-    print('d_w', d_w)
+    conv2d = Quant_Conv2d(3, 32, 3, bits=bits)
+    activation = Quant_Activation(bits=bits)
+    relu = nn.ReLU()
 
 
-    plt.plot(weight.detach().numpy()[0], t_w.detach().numpy()[0], 'ro', color='blue')
-    plt.plot(weight.detach().numpy()[0], d_w.detach().numpy()[0], 'ro')
-    plt.axis([0.2, 0.7, -1, 1])
+    out = conv2d(inputs)
+    out1 = relu(out)
+    out2 = activation(out1)
+
+    x = out1.view(-1).detach().numpy()
+    q_x = out2.view(-1).detach().numpy()
+    # weight = weight.view(-1).detach().numpy()
+    # quantizer = quantizer.view(-1).detach().numpy()
+
+    print('x',x )
+    print('q_x', q_x)
+    plt.plot(x, q_x, 'ro')
+    plt.axis([-0.4, 1, -1, 1])
     plt.show()
