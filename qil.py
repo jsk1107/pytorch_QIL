@@ -3,100 +3,239 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class Transformer(nn.Module):
-    def __init__(self, name):
-        super(Transformer, self).__init__()
+# class Transformer(nn.Module):
+#     def __init__(self, name):
+#         super(Transformer, self).__init__()
+#
+#         self.name = name
+#
+#         """ Transformer Parameter """
+#         if name == 'weight':
+#             self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+#             self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+#             self.gamma = torch.tensor([1.0], device='cuda')
+#         else:
+#             self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+#             self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+#             self.gamma = None
+#
+#     def forward(self, x):
+#
+#         alpha = 0.5 / self.d_delta
+#         beta = ((- 0.5 * self.c_delta) / self.d_delta) + 0.5
+#
+#         if self.name == 'weight':
+#             return self._weight_transform(x, alpha, beta)
+#         elif self.name == 'activation':
+#             return self._activation_transform(x, alpha, beta)
+#         else:
+#             raise NotImplementedError()
+#
+#     def _weight_transform(self, weight, alpha, beta):
+#         """ transformer T_w Eq(3) """
+#
+#         c = self.c_delta.detach()
+#         d = self.d_delta.detach()
+#         prun_point = torch.abs(c) - torch.abs(d)
+#         clip_point = torch.abs(c) + torch.abs(d)
+#
+#         prun_point = torch.where(prun_point <= 0, torch.tensor(0.0, device=0), prun_point)
+#         clip_point = torch.where(clip_point >= 1, torch.tensor(1.0, device=0), clip_point)
+#
+#
+#         hat_w = torch.where(torch.lt(torch.abs(weight), prun_point), torch.tensor(0.0, device=0),
+#                            torch.where(torch.gt(torch.abs(weight), clip_point), torch.sign(weight),
+#                                        torch.pow(alpha * torch.abs(weight) + beta,
+#                                                  self.gamma) * torch.sign(weight)))
+#
+#         # prun_point = self.c_delta - self.d_delta
+#         # clip_point = self.c_delta + self.d_delta
+#         #
+#         # prun_point = torch.where(prun_point <= 0, torch.tensor(0.0, device=0), prun_point)
+#         # clip_point = torch.where(clip_point >= 1, torch.tensor(1.0, device=0), clip_point)
+#         #
+#         # tmp_weight = (torch.pow((alpha * torch.abs(weight)) + beta, self.gamma) * torch.sign(weight)) * \
+#         #              ((torch.abs(weight) > prun_point) * \
+#         #              (torch.abs(weight) < clip_point))
+#         # tmp_weight_2 = tmp_weight + (torch.sign(weight) * (torch.abs(weight) > clip_point))
+#         return hat_w
+#
+#     def _activation_transform(self, x, alpha, beta):
+#         """ transformer T_x Eq(5) """
+#         prun_point = torch.abs(self.c_delta) - torch.abs(self.d_delta)
+#         clip_point = torch.abs(self.c_delta) + torch.abs(self.d_delta)
+#
+#         prun_point = torch.where(prun_point <= 0, torch.tensor(0.0, device=0), prun_point)
+#         clip_point = torch.where(clip_point >= 1, torch.tensor(1.0, device=0), clip_point)
+#
+#         hat_x = torch.where(torch.lt(x, prun_point), torch.tensor(0.0, device=0),
+#                             torch.where(torch.gt(x, clip_point), torch.tensor(1.0, device=0),
+#                                         alpha * x + beta))
+#         # prun_activation = x * (x < (self.c_delta - self.d_delta))
+#         # cliping_activation = x * (x > (self.c_delta - self.d_delta))
+#
+#         # tmp_x = x * (x > self.c_delta - self.d_delta).type(torch.cuda.FloatTensor) * \
+#         #         (x < self.c_delta + self.d_delta).type(torch.cuda.FloatTensor)
+#         # tmp_weight_2 = (alpha * tmp_x + beta) + (x > self.c_delta + self.d_delta)
+#
+#         # c_delta = torch.where(self.c_delta <= 0, torch.tensor(0.0, device=0), self.c_delta)
+#         # d_delta = torch.where(self.d_delta <= 0, torch.abs(self.d_delta), self.d_delta)
+#         #
+#         # prun_point = self.c_delta - self.d_delta
+#         # clip_point = self.c_delta + self.d_delta
+#         #
+#         # prun_point = torch.where(prun_point <= 0, torch.tensor(0.0, device=0), prun_point)
+#         # clip_point = torch.where(clip_point >= 1, torch.tensor(1.0, device=0), clip_point)
+#         #
+#         # tmp_x = (alpha * x + beta) * ((x > prun_point) * (x < clip_point))
+#         #
+#         # tmp_x_2 = tmp_x + (x > clip_point)
+#
+#         # interval_act = x * \
+#         #                (torch.abs(x) > self.pruning_point).type(torch.cuda.FloatTensor) * \
+#         #                (torch.abs(x) < self.clipping_point).type(torch.cuda.FloatTensor)
+#         # transformed_act = \
+#         #     (torch.abs(x) > self.clipping_point).type(torch.cuda.FloatTensor) + \
+#         #     alpha * torch.abs(interval_act) + beta
+#         return hat_x
+#
+#
+class Transformer(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, c_delta, d_delta, gamma, name):
+        #
+        # c_delta = torch.where(c_delta <= 0, torch.tensor(0.5, device=0), c_delta)
+        # d_delta = torch.where(d_delta <= 0, torch.tensor(1.0, device=0), d_delta)
+        if c_delta < 0 or d_delta < 0:
+            c_delta.data = torch.tensor([0.5], device=0)
+            d_delta.data = torch.tensor([0.5], device=0)
 
-        self.name = name
+        alpha = 0.5 / d_delta
+        beta = ((- 0.5 * c_delta) / d_delta) + 0.5
 
-        """ Transformer Parameter """
-        self.c_w = nn.Parameter(torch.tensor([0.2]))
-        self.d_w = nn.Parameter(torch.tensor([0.2]))
+        prun_point = c_delta - d_delta
+        clip_point = c_delta + d_delta
+        prun_point = torch.where(prun_point <= 0, torch.tensor([0.0], device=0), prun_point)
+        clip_point = torch.where(clip_point >= 1, torch.tensor([1.0], device=0), clip_point)
 
-        self.alpha_w = None
-        self.beta_w = None
+        if name == 'weight':
+            mask = (torch.abs(x) > prun_point) * (torch.abs(x) < clip_point) # Interval
+            tmp_weight = (torch.pow((alpha * torch.abs(x)) + beta, gamma) * torch.sign(x)) * mask
+            tmp_weight_2 = tmp_weight + (torch.sign(x) * (torch.abs(x) > clip_point))
+            ctx.save_for_backward(x, mask, alpha, beta, c_delta, d_delta, gamma, torch.Tensor([True]))
+            return tmp_weight_2
+        elif name == 'activation':
+            mask = (x > prun_point) * (x < clip_point) # Interval
+            tmp_x = (alpha * x + beta) * mask
+            tmp_x_2 = tmp_x + (x > clip_point)
+            ctx.save_for_backward(x, mask, alpha, beta, c_delta, d_delta, gamma, torch.Tensor([False]))
+            return tmp_x_2
+        else:
+            raise NotImplementedError
 
-        # TODO: gamma를 고정할것인지 학습할것인지는 선택 가능.
-        self.gamma = nn.Parameter(torch.Tensor([5.0]))
+    @staticmethod
+    def backward(ctx, grad_outputs):
+        x, mask, alpha, beta, c_delta, d_delta, gamma, flag = ctx.saved_tensors
+        grad_input = grad_c_delta = grad_d_delta = grad_gamma = name = None
+        if flag == 1:
+            # 공통 미분값
+            common = (gamma * (alpha * torch.abs(x) + beta) ** (gamma-1)) * torch.sign(x)
 
-    def forward(self, x):
+            grad_input = (common * alpha) * grad_outputs * mask # weight 편미분
+            grad_c_delta = (-alpha * common) * grad_outputs * mask # c_delta 편미분
+            grad_d_delta = (common * (alpha / d_delta) * (c_delta - torch.abs(x))) * grad_outputs * mask # d_delta 편미분
 
-        self.alpha = 0.5 / self.d_w
-        self.beta = -0.5 * self.c_w / self.d_w + 0.5
+            # print('grad_input', grad_input)
+            # print('grad_c_delta', grad_c_delta.sum())
+            # print('grad_d_delta', grad_d_delta)
+            return grad_input, grad_c_delta, grad_d_delta, None, None
+        elif flag == 0:
 
-        """ transformer T_w Eq(3) """
-        if self.name == 'weight':
-            return self._weight_transform(x)
-        elif self.name == 'activation':
-            return self._activation_transform(x)
+            grad_input = alpha * grad_outputs * mask # x 편미분
+            grad_c_delta = - alpha * grad_outputs * mask # c_delta 편미분
+            grad_d_delta = (alpha / d_delta) * (c_delta - x) * grad_outputs * mask # d_delta 편미분
+
+            return grad_input, grad_c_delta, grad_d_delta, None, None
         else:
             raise NotImplementedError()
-
-    def _weight_transform(self, weight):
-
-        hat_w = torch.where(torch.lt(torch.abs(weight), (self.c_w - self.d_w)), torch.tensor(0.0, device=0),
-                            torch.where(torch.gt(torch.abs(weight), (self.c_w + self.d_w)), torch.sign(weight),
-                                        torch.pow(self.alpha * torch.abs(weight) + self.beta,
-                                                  self.gamma) * torch.sign(weight)))
-        return hat_w
-
-    def _activation_transform(self, x):
-
-        hat_x = torch.where(torch.lt(x, self.c_w - self.d_w), torch.tensor(0.0, device=0),
-                            torch.where(torch.gt(x, (self.c_w + self.d_w)), torch.tensor(1.0, device=0),
-                                        self.alpha * x + self.beta))
-        return hat_x
 
 
 class Discretizer(torch.autograd.Function):
 
     @staticmethod
-    def forward(ctx, hat_w, bitw):
-
+    def forward(ctx, hat_w, bitw, name):
+        ctx.save_for_backward(hat_w)
         """ Discretizer D_w Eq(2) """
         quant_level = 2 ** (bitw - 1) - 1
-        bar_w = torch.round(hat_w * quant_level) / quant_level
-        return bar_w
+
+        """
+            Paper에서 DoReFaNet STE를 사용한다고 밝히고 있다.
+            We use straight-through-estimator [2, 27] for the gradient of the discretizers.
+        """
+        if name == 'weight':
+            return 2 * (torch.round((0.5 * hat_w + 0.5) * quant_level) / quant_level) - 1
+        elif name == 'activation':
+            return torch.round(hat_w * quant_level) / quant_level
 
     @staticmethod
     def backward(ctx, grad_outputs):
-        return grad_outputs, None
+        weight, = ctx.saved_tensors
+        gate = (torch.abs(weight) <= 1).float()
+        grad_inputs = grad_outputs * gate
+        return grad_inputs, None, None
 
 
 class Quantizer(nn.Module):
     def __init__(self, bit, name):
         super(Quantizer, self).__init__()
         self.bit = bit
+        self.name = name
+
+        # if name == 'weight':
+        #     self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+        #     self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+        #     self.gamma = torch.tensor([1.0], device='cuda')
+        # else:
+        #     self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+        #     self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+        #     self.gamma = None
+
         self.transformer = Transformer(name)
 
     def forward(self, x):
-
+        # print(self.name, x)
+        # if self.bit == 32:
+        #     return x
+        # transform_x = Transformer.apply(x, self.c_delta, self.d_delta, self.gamma, self.name)
         transform_x = self.transformer(x)
-        quantized_x = Discretizer.apply(transform_x, self.bit)
+        quantized_x = Discretizer.apply(transform_x, self.bit, self.name)
+        print('self.transformer', self.transformer.c_delta, self.transformer.d_delta)
 
         return quantized_x
 
 
 class Quant_Conv2d(nn.Conv2d):
     def __init__(self, in_channel, out_channel, kernel_size,
-                 stride=1, padding=0, dilation=1, groups=1, bias=True, bits=32):
+                 stride=1, padding=0, dilation=1, groups=1, bias=True, bit=32):
         super(Quant_Conv2d, self).__init__(
             in_channel, out_channel, kernel_size, stride, padding, dilation, groups, bias)
-        self.quantized_weight = Quantizer(bits, 'weight')
+        self.quantized_weight = Quantizer(bit, 'weight')
+        self.w_q = None
 
     def forward(self, x):
-
         w_q = self.quantized_weight(self.weight)
         return F.conv2d(x, w_q, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 
 class Quant_Activation(nn.Module):
-    def __init__(self, bits):
+    def __init__(self, bit=32):
         super(Quant_Activation, self).__init__()
-        self.quantized_activation = Quantizer(bits, 'activation')
+        self.quantized_activation = Quantizer(bit, 'activation')
 
     def forward(self, x):
         return self.quantized_activation(x)
+
+
 
 
 if __name__ == '__main__':
@@ -110,11 +249,11 @@ if __name__ == '__main__':
     torch.manual_seed(seed_number)
     random.seed(seed_number)
     transformer = Transformer(name='activation')
-    bits = 3
-    inputs = torch.normal(0, 1.5, (3, 3, 28, 28))
+    bit = 3
+    inputs = torch.normal(0, 1.5, (3, 3, 28, 28), device=0)
 
-    conv2d = Quant_Conv2d(3, 32, 3, bits=bits)
-    activation = Quant_Activation(bits=bits)
+    conv2d = Quant_Conv2d(3, 32, 3, bit=bit).to('cuda')
+    activation = Quant_Activation(bit=bit).to('cuda')
     relu = nn.ReLU()
 
 
@@ -122,13 +261,24 @@ if __name__ == '__main__':
     out1 = relu(out)
     out2 = activation(out1)
 
-    x = out1.view(-1).detach().numpy()
-    q_x = out2.view(-1).detach().numpy()
+    # print('input', inputs)
+    # print('out', out)
+    # print('out1', out1)
+    # print('out2', out2)
+    # [-4.4442e-01, 4.0147e+00, -2.1127e-01, ..., 1.9719e+00,
+    # 4.0191e+00, 2.3380e+00]
+    # [-7.1296, 16.2033, 3.6591, ..., -3.0545, -1.0386, -3.0128]
+    # [0.0000, 16.2033, 3.6591, ..., 0.0000, 0.0000, 0.0000]
+    # 0.0000, 16.2033, 3.6591, ..., 0.0000, 0.0000, 0.0000] # ReLu
+    # [-0.5000, 0.5000, 0.5000, ..., -0.5000, -0.5000, -0.5000] # transform_activation
+    # [-0.6667, 0.6667, 0.6667, ..., -0.6667, -0.6667, -0.6667]
+    x = out1.view(-1).detach().cpu().numpy()
+    q_x = out2.view(-1).detach().cpu().numpy()
     # weight = weight.view(-1).detach().numpy()
     # quantizer = quantizer.view(-1).detach().numpy()
 
-    print('x',x )
-    print('q_x', q_x)
+    # print('x',x )
+    # print('q_x', q_x)
     plt.plot(x, q_x, 'ro')
     plt.axis([-0.4, 1, -1, 1])
     plt.show()
