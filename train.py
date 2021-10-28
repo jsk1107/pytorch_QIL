@@ -5,6 +5,7 @@ from torchvision.transforms import transforms as T
 from resnet import resnet20
 import torch.optim as optim
 from tqdm import tqdm
+from utils import Hook
 
 
 """ Data Setting """
@@ -74,26 +75,58 @@ if model_path:
 from qil import Transformer
 from torch.nn import Conv2d
 import matplotlib.pyplot as plt
-for name, module in model.named_modules():
+# for name, module in model.named_modules():
+#
+#     if isinstance(module, Transformer):
+#         layer_name = module.name
+#         if layer_name == 'weight':
+#
+#             module.c_delta.data = torch.nn.Parameter(torch.tensor([0.2], device='cuda'))
+#             module.d_delta.data = torch.nn.Parameter(torch.tensor([0.15], device='cuda'))
+#         if layer_name == 'activation':
+#             module.c_delta.data = torch.nn.Parameter(torch.tensor([0.5], device='cuda'))
+#             module.d_delta.data = torch.nn.Parameter(torch.tensor([0.45], device='cuda'))
 
-    # if isinstance(module, Conv2d):
-    #     for name_1, param in module.named_parameters():
-    #         if name_1 == 'weight':
-    #             tmp = param.view(-1).detach().cpu().numpy()
-    #             plt.hist(tmp)
-    #             plt.xlabel(f'{name} {name_1}')
-    #             plt.ylabel('count')
-    #             plt.show()
+# 1024장 이미지를 통해 c_x, d_x 초기값 정하기
+
+model.train()
+tmp_dataloader = DataLoader(train_set, batch_size=1024, shuffle=True, pin_memory=True)
+
+# Hook 등록
+
+handle_hooks = []
+for module_name, module in model.named_modules():
+    if isinstance(module, Transformer):
+        # if module.name == 'activation':
+        h = Hook(module, module_name)
+        handle_hooks.append(h)
+
+for data in tmp_dataloader:
+    optimizer.zero_grad()
+
+    imgs, targets = data
+    imgs, targets = imgs.to(device), targets.to(device)
+
+    output = model(imgs)
+    iter_loss = criterion(output, targets)
+    iter_loss.backward()
+    break
+
+# Hook 제거
+for handle_hook in handle_hooks:
+    handle_hook.handle.remove()
+
+# 값 들어갔는지 체크
+for name, module in model.named_modules():
 
     if isinstance(module, Transformer):
         layer_name = module.name
         if layer_name == 'weight':
-
-            module.c_delta.data = torch.nn.Parameter(torch.tensor([0.2], device='cuda'))
-            module.d_delta.data = torch.nn.Parameter(torch.tensor([0.15], device='cuda'))
+            print(layer_name, module.c_delta.data)
+            print(layer_name, module.d_delta.data)
         if layer_name == 'activation':
-            module.c_delta.data = torch.nn.Parameter(torch.tensor([0.5], device='cuda'))
-            module.d_delta.data = torch.nn.Parameter(torch.tensor([0.45], device='cuda'))
+            print(layer_name, module.c_delta.data)
+            print(layer_name, module.d_delta.data)
 
 for EPOCH in range(EPOCHS):
 
