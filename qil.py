@@ -29,11 +29,15 @@ class Transformer(nn.Module):
 
         self.c_delta.data = torch.abs(self.c_delta)
         self.d_delta.data = torch.abs(self.d_delta)
+
+        if self.d_delta.data < 0.001:
+            self.d_delta.data += 1e-10
+
         prun_point = self.c_delta - self.d_delta
         clip_point = self.c_delta + self.d_delta
 
-        alpha = 0.5 / self.d_delta
-        beta = ((- 0.5 * self.c_delta) / self.d_delta) + 0.5
+        alpha = 0.5 / (self.d_delta) # 0으로 나눠지게 되는것 방지. (nan, inf 발생)
+        beta = ((- 0.5 * self.c_delta) / (self.d_delta)) + 0.5 # 0으로 나눠지게 되는것 방지. (nan, inf 발생)
 
         if self.name == 'weight':
             return self._weight_transform(x, alpha, beta, prun_point, clip_point)
