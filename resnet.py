@@ -48,29 +48,45 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes, w_bit=32, a_bit=32):
         super(ResNet, self).__init__()
 
+        self.num_classes = num_classes
         self.norm_layer = nn.BatchNorm2d
-
-        self.in_planes = 16
         self.dilation = 1
         self.w_bit = w_bit
         self.a_bit = a_bit
 
+        if num_classes == 10:
+            self.in_planes = 16
+            conv1_param = [3, 1, 1]
+            make_layer_param = [16, 32, 64]
+            fc_inplain = 64
+
+        elif num_classes == 1000:
+            self.in_planes = 64
+            conv1_param = [7, 2, 3]
+            make_layer_param = [64, 128, 256, 512]
+            fc_inplain = 512
+
         """ first Layer doesn't apply qantization """
-        self.conv1 = nn.Conv2d(3, self.in_planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(3, self.in_planes, kernel_size=conv1_param[0], stride=conv1_param[1], padding=conv1_param[2], bias=False)
         self.bn1 = self.norm_layer(self.in_planes)
         self.relu = nn.ReLU(inplace=True)
-        # self.maxpooling = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-
-        """ Quantization """
-        self.layer1 = self._make_layer(block, 16, layers[0], stride=1)
-        self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
 
         """ Average Pooling """
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
+        """ Max Pooling """
+        self.maxpooling = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+
+        """ Quantization """
+        self.layer1 = self._make_layer(block, make_layer_param[0], layers[0], stride=1)
+        self.layer2 = self._make_layer(block, make_layer_param[1], layers[1], stride=2)
+        self.layer3 = self._make_layer(block, make_layer_param[2], layers[2], stride=2)
+        if num_classes == 1000:
+            self.layer4 = self._make_layer(block, make_layer_param[3], layers[3], stride=2)
+
         """ Final Layer doesn't apply quantization """
-        self.fc = nn.Linear(64 * block.expansion, num_classes)
+        self.fc = nn.Linear(fc_inplain * block.expansion, num_classes)
+
 
         # TODO
         """ Init Weight """
@@ -98,10 +114,16 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        x = self.maxpooling(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
+
+        """ 이미지넷 클래스 개수: 1000 """
+        """ CIFAR10 클래스 갯수: 10 """
+        if self.num_classes == 1000:
+            x = self.layer4(x)
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
@@ -113,19 +135,31 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 
-def resnet20(pretrained_path=None, **kwarg):
-    resnet = ResNet(BasicBlock, [3, 3, 3], num_classes=10, **kwarg)
+def resnet20(pretrained_path=None, **kwargs):
+    resnet = ResNet(BasicBlock, [3, 3, 3], num_classes=10, **kwargs)
 
     if pretrained_path is not None:
-        if not os.path.exiests(pretrained_path):
-            raise FileExistsError()
+        if not os.path.exists(pretrained_path):
+            print(f'CIFAR10 FP32 학습 시작')
+            return resnet
+        print(f'load: {kwargs} | {pretrained_path}')
 
-        checkpoint = torch.load(f'{pretrained_path}', map_location='cpu')
-        try:
-            resnet.load_state_dict(checkpoint['state_dict'], strict=True)
-        except KeyError as e:
-            print(e)
+        checkpoint = torch.load(f'{pretrained_path}')
+        resnet.load_state_dict(checkpoint['state_dict'], strict=True)
+    return resnet
 
+
+def resnet18(pretrained_path=None, **kwargs):
+    resnet = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=1000, **kwargs)
+
+    if pretrained_path is not None:
+        if not os.path.exists(pretrained_path):
+            print(f'ImageNet FP32 학습 시작')
+            return resnet
+        print(f'load: {kwargs} | {pretrained_path}')
+
+        checkpoint = torch.load(f'{pretrained_path}')
+        resnet.load_state_dict(checkpoint['state_dict'], strict=True)
     return resnet
 
 
