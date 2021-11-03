@@ -10,19 +10,11 @@ class Transformer(nn.Module):
         self.name = name
 
         """ Transformer Parameter """
-        # self.c_delta = torch.tensor([0.5], device='cuda')
-        # self.d_delta = torch.tensor([0.5], device='cuda')
-        # self.c_delta = nn.Parameter(torch.tensor([0.3], device='cuda'))
-        # self.d_delta = nn.Parameter(torch.tensor([0.3], device='cuda'))
+        self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+        self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
         if name == 'weight':
-            self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
-            self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
             self.gamma = torch.tensor([1.0], device='cuda')
         else:
-            self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
-            self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
-            # self.c_delta = torch.tensor([0.5], device='cuda')
-            # self.d_delta = torch.tensor([0.5], device='cuda')
             self.gamma = None
 
     def forward(self, x):
@@ -30,14 +22,15 @@ class Transformer(nn.Module):
         self.c_delta.data = torch.abs(self.c_delta)
         self.d_delta.data = torch.abs(self.d_delta)
 
+        # 0으로 나눠지게 되는것 방지. (nan, inf 발생)
         if self.d_delta.data < 0.001:
             self.d_delta.data += 1e-10
 
         prun_point = self.c_delta - self.d_delta
         clip_point = self.c_delta + self.d_delta
 
-        alpha = 0.5 / (self.d_delta) # 0으로 나눠지게 되는것 방지. (nan, inf 발생)
-        beta = ((- 0.5 * self.c_delta) / (self.d_delta)) + 0.5 # 0으로 나눠지게 되는것 방지. (nan, inf 발생)
+        alpha = 0.5 / self.d_delta
+        beta = ((- 0.5 * self.c_delta) / self.d_delta) + 0.5
 
         if self.name == 'weight':
             return self._weight_transform(x, alpha, beta, prun_point, clip_point)
@@ -47,34 +40,25 @@ class Transformer(nn.Module):
             raise NotImplementedError()
 
     def _weight_transform(self, weight, alpha, beta, prun_point, clip_point):
+
         """ transformer T_w Eq(3) """
-
-
-        #
         hat_w = torch.where(torch.lt(torch.abs(weight), prun_point), torch.tensor(0.0, device=0),
                            torch.where(torch.gt(torch.abs(weight), clip_point), torch.sign(weight),
                                        torch.pow(alpha * torch.abs(weight) + beta,
                                                  self.gamma) * torch.sign(weight)))
 
-        # tmp_weight = (torch.pow((alpha * torch.abs(weight)) + beta, self.gamma) * torch.sign(weight)) * \
-        #              ((torch.abs(weight) > prun_point) * \
-        #              (torch.abs(weight) < clip_point))
-        # tmp_weight_2 = tmp_weight + (torch.sign(weight) * (torch.abs(weight) > clip_point))
         return hat_w
 
     def _activation_transform(self, x, alpha, beta, prun_point, clip_point):
-        """ transformer T_x Eq(5) """
 
+        """ transformer T_x Eq(5) """
         hat_x = torch.where(torch.lt(x, prun_point), torch.tensor(0.0, device=0),
                             torch.where(torch.gt(x, clip_point), torch.tensor(1.0, device=0),
                                         alpha * x + beta))
 
-        # tmp_x = (alpha * x + beta) * ((x > prun_point) * (x < clip_point))
-        # tmp_x_2 = tmp_x + (x > clip_point)
-
         return hat_x
 
-#
+
 # class Transformer(torch.autograd.Function):
 #     @staticmethod
 #     def forward(ctx, x, c_delta, d_delta, gamma, name):
@@ -141,6 +125,7 @@ class Discretizer(torch.autograd.Function):
     @staticmethod
     def forward(ctx, hat_w, bitw, name):
         ctx.save_for_backward(hat_w)
+
         """ Discretizer D_w Eq(2) """
         quant_level = 2 ** (bitw - 1) - 1
 
@@ -166,34 +151,22 @@ class Quantizer(nn.Module):
         super(Quantizer, self).__init__()
         self.bit = bit
         self.name = name
-        #
-        # if name == 'weight':
-        #     self.c_delta = nn.Parameter(torch.tensor([0.01], device='cuda'))
-        #     self.d_delta = nn.Parameter(torch.tensor([0.001], device='cuda'))
-        #     self.gamma = torch.tensor([1.0], device='cuda')
-        # else:
-        #     self.c_delta = nn.Parameter(torch.tensor([0.1], device='cuda'))
-        #     self.d_delta = nn.Parameter(torch.tensor([0.01], device='cuda'))
-        #     self.gamma = None
-
         self.transformer = Transformer(name)
 
     def forward(self, x):
 
         if self.bit == 32:
             return x
-        # transform_x = Transformer.apply(x, self.c_delta, self.d_delta, self.gamma, self.name)
         transform_x = self.transformer(x)
         quantized_x = Discretizer.apply(transform_x, self.bit, self.name)
-        # print(self.name, 'c:', round(self.transformer.c_delta.item(), 5), 'd:', round(self.transformer.d_delta.item(),6))
 
         return quantized_x
 
 
-class Quant_Conv2d(nn.Conv2d):
+class QConv2d(nn.Conv2d):
     def __init__(self, in_channel, out_channel, kernel_size,
                  stride=1, padding=0, dilation=1, groups=1, bias=True, bit=32):
-        super(Quant_Conv2d, self).__init__(
+        super(QConv2d, self).__init__(
             in_channel, out_channel, kernel_size, stride, padding, dilation, groups, bias)
         self.bit = bit
         self.quantized_weight = Quantizer(bit, 'weight')
@@ -203,9 +176,9 @@ class Quant_Conv2d(nn.Conv2d):
         return F.conv2d(x, w_q, self.bias, self.stride, self.padding, self.dilation, self.groups)
 
 
-class Quant_Activation(nn.Module):
+class QActivation(nn.Module):
     def __init__(self, bit=32):
-        super(Quant_Activation, self).__init__()
+        super(QActivation, self).__init__()
         self.quantized_activation = Quantizer(bit, 'activation')
 
     def forward(self, x):
@@ -217,7 +190,6 @@ if __name__ == '__main__':
     import torch
     import random
     import matplotlib.pyplot as plt
-    from torchvision.models import resnet
 
     seed_number = 1
     torch.manual_seed(seed_number)
@@ -236,8 +208,6 @@ if __name__ == '__main__':
 
     x = out1.view(-1).detach().cpu().numpy()
     q_x = out2.view(-1).detach().cpu().numpy()
-    # weight = weight.view(-1).detach().numpy()
-    # quantizer = quantizer.view(-1).detach().numpy()
 
     w = conv2d.weight
     w_hat = conv2d.quantized_weight(conv2d.weight)
