@@ -1,9 +1,8 @@
 import torch
 from torch.utils.data import DataLoader
-from torchvision.datasets import CIFAR10, ImageNet, ImageFolder
+from torchvision.datasets import CIFAR10, ImageFolder
 from torchvision.transforms import transforms as T
 from resnet import resnet20, resnet18
-# from torchvision.models.resnet import resnet18
 import torch.optim as optim
 from tqdm import tqdm
 from utils import Hook
@@ -11,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from qil import Transformer
 from logger import get_logger
+import argparse
 
 
 """ Logger 등록 """
@@ -49,88 +49,31 @@ def custom_transfroms_imagenet(train=True):
                                        std=[0.229, 0.224, 0.225])
                            ])
 
-# train_set = CIFAR10('../data', train=True, transform=custom_transfroms_cifar10(True), download=True)
-# val_set = CIFAR10('../data', train=False, transform=custom_transfroms_cifar10(False))
-
-train_set = ImageFolder('../data/imagenet/', transform=custom_transfroms_imagenet(True))
-val_set = ImageFolder('../data/imagenet/', transform=custom_transfroms_imagenet(False))
-
-train_loader = DataLoader(train_set, batch_size=256, shuffle=True, pin_memory=True)
-val_loader = DataLoader(val_set, batch_size=256, shuffle=False, pin_memory=True)
-
-""" CONFIG """
-
-EPOCHS = 120
-
-if torch.cuda.is_available():
-    device = 'cuda'
-else:
-    device = 'cpu'
+def train(model, criterion, optimizer, lr_scheduler, device, train_data_loader, val_dataloader):
+    pass
 
 
-def interval_param_list(model):
-    for name, param in model.named_parameters():
-        target = name.split('.')[-1].split('_')[-1]
-        if target == 'delta':
-            yield param
+def main(args, **kwargs):
 
+    if args.data == 'ILSVRC2012':
+        train_set = ImageFolder('../data/imagenet/', transform=custom_transfroms_imagenet(True))
+        val_set = ImageFolder('../data/imagenet/', transform=custom_transfroms_imagenet(False))
+    elif args.data == 'CAFAR10':
+        train_set = CIFAR10('../data', train=True, transform=custom_transfroms_cifar10(True), download=True)
+        val_set = CIFAR10('../data', train=False, transform=custom_transfroms_cifar10(False))
 
-def weight_param_list(model):
-    for name, param in model.named_parameters():
-        target = name.split('.')[-1].split('_')[-1]
-        if target != 'delta':
-            yield param
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, pin_memory=True)
+    val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, pin_memory=True)
 
+    """ CONFIG """
 
-def graph_prun_ratio(handle_hooks, plot=False):
-    if not plot:
-        return
+    EPOCHS = 120
 
-    # prun ratio 그래프 그리기
-    activation_prun_ratio = []
-    weight_prun_ratio = []
-    for handle_hook in handle_hooks:
-        name = handle_hook.module.name
-        if name == 'weight':
-            inputs = handle_hook.weight
-            ratio = (len(inputs) - np.count_nonzero(inputs)) / len(inputs)
-            weight_prun_ratio.append(ratio)
-        elif name == 'activation':
-            inputs = handle_hook.activation
-            ratio = (len(inputs) - np.count_nonzero(inputs)) / len(inputs)
-            activation_prun_ratio.append(ratio)
+    if torch.cuda.is_available():
+        device = 'cuda'
+    else:
+        device = 'cpu'
 
-    xlim = np.arange(len(activation_prun_ratio))+1
-    plt.bar(xlim, activation_prun_ratio)
-    plt.xticks(xlim, xlim)
-    plt.ylabel('Activation Pruning Ratio')
-    plt.show()
-
-    xlim = np.arange(len(weight_prun_ratio))+1
-    plt.bar(xlim, weight_prun_ratio)
-    plt.xticks(xlim, xlim)
-    plt.ylabel('Weight Pruning Ratio')
-    plt.show()
-
-
-def check_interval_param(model):
-
-    for name, module in model.named_modules():
-        if isinstance(module, Transformer):
-            layer_name = module.name
-            if layer_name == 'weight':
-                print(
-                    f'{name}{layer_name} ||'
-                    f' c_w: {round(module.c_delta.data.item(), 5)},'
-                    f' d_w: {round(module.d_delta.data.item(), 5)}')
-            if layer_name == 'activation':
-                print(
-                    f'{name}{layer_name} ||'
-                    f' c_x: {round(module.c_delta.data.item(), 5)},'
-                    f' d_x: {round(module.d_delta.data.item(), 5)}')
-
-
-def main(**kwargs):
     pretrain_model_path = 'final_fp32_model.pt'
     # model = resnet20(pretrain_model_path, **kwargs)
     model = resnet18(pretrain_model_path, **kwargs)
@@ -245,8 +188,16 @@ def main(**kwargs):
 
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser("QIL")
+    parser.add_argument('-d, --data', type=str, default='imagenet', help='데이터셋 종류. ILSVRC2012 or CIFAR10')
+    parser.add_argument('-b', '--batch-size', type=int, default=256, help='Batch size')
+
+
+    args = parser.parse_args()
+
+
     # bits = [[32, 32], [5, 5], [4, 4], [3, 3], [2, 2]]
     bits = [[32, 32]]
     for i in bits:
         kwargs = {'w_bit': i[0], 'a_bit': i[1]}
-        main(**kwargs)
+        main(args, **kwargs)
