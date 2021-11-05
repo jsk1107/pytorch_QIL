@@ -1,6 +1,5 @@
 # utils.py
 import torch
-import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
 from qil import Transformer
@@ -21,7 +20,7 @@ class Hook:
 
     def hook_fn(self, module, input, output):
 
-        print('------------', self.module_name, '.', self.module.name, '------------')
+        print(f'HOOK 설정 Layer: {self.module_name}-{self.module.name}')
         value = input[0].view(-1).detach().cpu().numpy()
         value = value[value > 0]
         out = output[0].view(-1).detach().cpu().numpy()
@@ -43,14 +42,7 @@ class Hook:
         module.c_delta.data = torch.nn.Parameter(torch.tensor([c_delta], device=0, dtype=torch.float))
         module.d_delta.data = torch.nn.Parameter(torch.tensor([d_delta], device=0, dtype=torch.float))
 
-        # plt.hist(value, bins=30)
-        # plt.xlabel(f'{self.module_name} input')
-        # plt.ylabel('count')
-        # plt.show()
-
     def graph_prun_ratio(self):
-        # x_label = ''.join(self.module_name.split('.')[:3])
-
         prun_ratio = []
         for idx, value in enumerate(self.input):
             prun_ratio.append((len(value) - np.count_nonzero(value)) / len(value))
@@ -114,12 +106,12 @@ def check_interval_param(model):
             layer_name = module.name
             if layer_name == 'weight':
                 print(
-                    f'{name}{layer_name} ||'
+                    f'{name}{layer_name} --> '
                     f' c_w: {round(module.c_delta.data.item(), 5)},'
                     f' d_w: {round(module.d_delta.data.item(), 5)}')
             if layer_name == 'activation':
                 print(
-                    f'{name}{layer_name} ||'
+                    f'{name}{layer_name} --> '
                     f' c_x: {round(module.c_delta.data.item(), 5)},'
                     f' d_x: {round(module.d_delta.data.item(), 5)}')
 
