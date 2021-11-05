@@ -2,7 +2,7 @@
 
 import torch
 import torch.nn as nn
-from qil import Quant_Conv2d, Quant_Activation
+from qil import QConv2d, QActivation
 # from test import Quant_Conv2d, Quant_Activation
 from torchsummary import summary
 import os
@@ -14,12 +14,12 @@ class BasicBlock(nn.Module):
     def __init__(self, in_planes, planes, stride=1, downsample=None, w_bit=32, a_bit=32):
         super(BasicBlock, self).__init__()
 
-        self.quant_conv1 = Quant_Conv2d(in_planes, planes, 3, stride, padding=1, bit=w_bit)
+        self.quant_conv1 = QConv2d(in_planes, planes, 3, stride, padding=1, bit=w_bit)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.quant_activation_1 = Quant_Activation(a_bit)
-        self.quant_conv2 = Quant_Conv2d(planes, planes, 3, padding=1, bit=w_bit)
+        self.quant_activation_1 = QActivation(a_bit)
+        self.quant_conv2 = QConv2d(planes, planes, 3, padding=1, bit=w_bit)
         self.bn2 = nn.BatchNorm2d(planes)
-        self.quant_activation_2 = Quant_Activation(a_bit)
+        self.quant_activation_2 = QActivation(a_bit)
         self.downsample = downsample
         self.relu = nn.ReLU(inplace=True)
 
@@ -98,7 +98,7 @@ class ResNet(nn.Module):
 
         if stride != 1 or self.in_planes != planes * block.expansion:
             downsample = nn.Sequential(
-                Quant_Conv2d(self.in_planes, planes, 1, stride, bit=self.w_bit),
+                QConv2d(self.in_planes, planes, 1, stride, bit=self.w_bit),
                 nn.BatchNorm2d(planes * block.expansion)
             )
         layers.append(block(self.in_planes, planes, stride, downsample, w_bit=self.w_bit, a_bit=self.a_bit))
