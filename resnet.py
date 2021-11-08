@@ -114,7 +114,8 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpooling(x)
+        # if self.num_classes == 1000:
+        #     x = self.maxpooling(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
