@@ -11,7 +11,6 @@ from logger import get_logger
 import argparse
 
 
-
 """ Logger 등록 """
 logger = get_logger('./log', log_config='./logging.json')
 
@@ -69,9 +68,9 @@ def train(model, criterion, optimizer, lr_scheduler, train_loader, device, EPOCH
             optimizer.step()
 
             tbar.set_description(
-                f'EPOCH: {EPOCH + 1} | total_train_loss: {train_loss / (i + 1):.4f} | batch_loss: {iter_loss:.4f}'
+                f'EPOCH: {EPOCH} | total_train_loss: {train_loss / (i + 1):.4f} | batch_loss: {iter_loss:.4f}'
             )
-        lr_scheduler.step(EPOCH)
+        lr_scheduler.step()
 
 
 def validation(model, criterion, device, val_loader, EPOCH):
@@ -92,15 +91,14 @@ def validation(model, criterion, device, val_loader, EPOCH):
             val_loss += iter_loss
 
             tbar.set_description(
-                f'EPOCH: {EPOCH + 1} | total_val_loss: {val_loss / (i + 1):.4f} | batch_loss: {iter_loss:.4f}'
-            )
+                f'EPOCH: {EPOCH} | total_val_loss: {val_loss / (i + 1):.4f} | batch_loss: {iter_loss:.4f}')
 
             _, pred_idx = torch.max(output, dim=1)
             total += targets.size(0)
             correct += (pred_idx == targets).sum()
     acc = 100 * correct / total
 
-    logger.info(f'EPOCH: {EPOCH + 1} | '
+    logger.info(f'EPOCH: {EPOCH} | '
                 f'Loss: {val_loss / (i + 1):.4f} | '
                 f'Accuracy: {acc:.4f}%')
 
@@ -112,14 +110,15 @@ def main(args, **kwargs):
     """ CONFIG """
     w_bit, a_bit = kwargs.get('w_bit'), kwargs.get('a_bit')
     pretrain_model_path = args.pretrained_path
-    batch_size = args.batch_size
-
     if torch.cuda.is_available():
         device = 'cuda'
     else:
         raise NotImplementedError('GPU 셋팅을 다시 해주세요.')
+
     """ Data Type 셋팅 """
     if args.data == 'ILSVRC2012':
+        """ The same environment as the setting in the paper """
+        batch_size = 256
         if w_bit == 32 and a_bit == 32:
             EPOCHS = 120
             interval_lr = 0
@@ -135,15 +134,17 @@ def main(args, **kwargs):
         model = resnet18(pretrain_model_path, **kwargs)
 
     elif args.data == 'CIFAR10':
+        """ 내가 설정한 임의의 환경 """
+        batch_size = 128
         if w_bit == 32 and a_bit == 32:
             EPOCHS = 200
             interval_lr = 0
-            weight_lr = 4e-1
+            weight_lr = 1e-1
             milestones = [100, 150, 180]
         else:
             EPOCHS = 150
-            interval_lr = 4e-4
-            weight_lr = 4e-2
+            interval_lr = 1e-4
+            weight_lr = 1e-2
             milestones = [60, 90, 120]
         train_set = CIFAR10('../data', train=True, transform=custom_transfroms_cifar10(True), download=True)
         val_set = CIFAR10('../data', train=False, transform=custom_transfroms_cifar10(False))
@@ -193,14 +194,15 @@ def main(args, **kwargs):
             handle_hook.handle.remove()
 
     best_acc = .0
-    for EPOCH in range(EPOCHS):
+    for EPOCH in range(1, EPOCHS):
         train(model, criterion, optimizer, lr_scheduler, train_loader, device, EPOCH)
 
-        if EPOCH % 5 == 0:
+        if EPOCH == 1 or EPOCH % 5 == 0:
             acc = validation(model, criterion, device, val_loader, EPOCH)
 
             """ Interval Param Check """
-            check_interval_param(model)
+            if w_bit != 32 and a_bit != 32:
+                check_interval_param(model)
 
             if best_acc < acc:
                 best_acc = acc
