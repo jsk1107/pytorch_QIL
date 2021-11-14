@@ -126,16 +126,17 @@ class Discretizer(torch.autograd.Function):
     def forward(ctx, hat_w, bitw, name):
         ctx.save_for_backward(hat_w)
 
-        """ Discretizer D_w Eq(2) """
-        quant_level = 2 ** (bitw - 1) - 1
-
         """
             Paper에서 DoReFaNet STE를 사용한다고 밝히고 있다.
             We use straight-through-estimator [2, 27] for the gradient of the discretizers.
         """
+
+        """ Discretizer D_w Eq(2) """
         if name == 'weight':
+            quant_level = 2 ** (bitw - 1) - 1
             return 2 * (torch.round((0.5 * hat_w + 0.5) * quant_level) / quant_level) - 1
         elif name == 'activation':
+            quant_level = (2 ** bitw) - 1
             return torch.round(hat_w * quant_level) / quant_level
 
     @staticmethod
