@@ -27,14 +27,13 @@ class Hook:
         if self.module.name == 'weight':
             self.weight = out
             percentile_90 = np.percentile(value, 90)
+            value = value[value < percentile_90]
             hist = np.histogram(value, bins=50)[1][1:]
-            hist = hist[hist < percentile_90]
         elif self.module.name == 'activation':
             self.activation = out
             percentile_90 = np.percentile(value, 90)
+            value = value[value < percentile_90]
             hist = np.histogram(value, bins=50)[1][1:]
-            hist = hist[hist < percentile_90]
-
 
         prun_point, clip_point = np.min(hist), np.max(hist)
         c_delta = (prun_point + clip_point) / 2
