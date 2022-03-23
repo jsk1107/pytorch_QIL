@@ -10,10 +10,10 @@ class Transformer(nn.Module):
         self.name = name
 
         """ Transformer Parameter """
-        self.c_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
-        self.d_delta = nn.Parameter(torch.tensor([0.5], device='cuda'))
+        self.c_delta = nn.Parameter(torch.tensor([0.1]))
+        self.d_delta = nn.Parameter(torch.tensor([0.05]))
         if name == 'weight':
-            self.gamma = torch.tensor([1.0], device='cuda')
+            self.gamma = torch.tensor([1.0])
         else:
             self.gamma = None
 
@@ -24,7 +24,14 @@ class Transformer(nn.Module):
 
         # 0으로 나눠지게 되는것 방지. (nan, inf 발생)
         if self.d_delta.data < 0.001:
-            self.d_delta.data += 1e-10
+            self.d_delta.data += 1e-4
+
+        if self.c_delta.data < 0.001:
+            self.c_delta.data += 1e-4
+
+        # 역전 방지
+        if self.d_delta.data > self.c_delta.data:
+            self.d_delta.data = self.c_delta.data
 
         prun_point = self.c_delta - self.d_delta
         clip_point = self.c_delta + self.d_delta
@@ -42,7 +49,7 @@ class Transformer(nn.Module):
     def _weight_transform(self, weight, alpha, beta, prun_point, clip_point):
 
         """ transformer T_w Eq(3) """
-        hat_w = torch.where(torch.lt(torch.abs(weight), prun_point), torch.tensor(0.0, device=0),
+        hat_w = torch.where(torch.lt(torch.abs(weight), prun_point), torch.zeros_like(weight),
                            torch.where(torch.gt(torch.abs(weight), clip_point), torch.sign(weight),
                                        torch.pow(alpha * torch.abs(weight) + beta,
                                                  self.gamma) * torch.sign(weight)))
@@ -52,8 +59,8 @@ class Transformer(nn.Module):
     def _activation_transform(self, x, alpha, beta, prun_point, clip_point):
 
         """ transformer T_x Eq(5) """
-        hat_x = torch.where(torch.lt(x, prun_point), torch.tensor(0.0, device=0),
-                            torch.where(torch.gt(x, clip_point), torch.tensor(1.0, device=0),
+        hat_x = torch.where(torch.lt(x, prun_point), torch.zeros_like(x),
+                            torch.where(torch.gt(x, clip_point), torch.ones_like(x),
                                         alpha * x + beta))
 
         return hat_x
@@ -134,10 +141,11 @@ class Discretizer(torch.autograd.Function):
         """ Discretizer D_w Eq(2) """
         if name == 'weight':
             quant_level = 2 ** (bitw - 1) - 1
-            return 2 * (torch.round((0.5 * hat_w + 0.5) * quant_level) / quant_level) - 1
+            # return 2 * (torch.round((0.5 * hat_w + 0.5) * quant_level) / quant_level) - 1
         elif name == 'activation':
             quant_level = (2 ** bitw) - 1
-            return torch.round(hat_w * quant_level) / quant_level
+
+        return torch.round(hat_w * quant_level) / quant_level
 
     @staticmethod
     def backward(ctx, grad_outputs):
@@ -166,7 +174,7 @@ class Quantizer(nn.Module):
 
 class QConv2d(nn.Conv2d):
     def __init__(self, in_channel, out_channel, kernel_size,
-                 stride=1, padding=0, dilation=1, groups=1, bias=True, bit=32):
+                 stride=1, padding=0, dilation=1, groups=1, bias=False, bit=32):
         super(QConv2d, self).__init__(
             in_channel, out_channel, kernel_size, stride, padding, dilation, groups, bias)
         self.bit = bit
@@ -199,8 +207,8 @@ if __name__ == '__main__':
     bit = 3
     inputs = torch.normal(0, 1.5, (3, 3, 28, 28), device=0)
 
-    conv2d = Quant_Conv2d(3, 32, 3, bit=bit).to('cuda')
-    activation = Quant_Activation(bit=bit).to('cuda')
+    conv2d = QConv2d(3, 32, 3, bit=bit).to('cuda')
+    activation = QActivation(bit=bit).to('cuda')
     relu = nn.ReLU()
 
     out = conv2d(inputs)
