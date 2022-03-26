@@ -3,49 +3,51 @@
 import torch
 import torch.nn as nn
 from qil import QConv2d, QActivation
-# from test import Quant_Conv2d, Quant_Activation
 from torchsummary import summary
 import os
 
 
-class BasicBlock(nn.Module):
+class PreActBasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_planes, planes, stride=1, downsample=None, w_bit=32, a_bit=32):
-        super(BasicBlock, self).__init__()
+    def __init__(self, in_planes, planes, stride=1, w_bit=32, a_bit=32):
+        super(PreActBasicBlock, self).__init__()
 
-        self.quant_conv1 = QConv2d(in_planes, planes, 3, stride, padding=1, bit=w_bit)
-        self.bn1 = nn.BatchNorm2d(planes)
+        self.relu = nn.ReLU(inplace=True)
+        self.bn1 = nn.BatchNorm2d(in_planes)
         self.quant_activation_1 = QActivation(a_bit)
-        self.quant_conv2 = QConv2d(planes, planes, 3, padding=1, bit=w_bit)
+        self.quant_conv1 = QConv2d(in_planes, planes, 3, stride, padding=1, bit=w_bit)
+
         self.bn2 = nn.BatchNorm2d(planes)
         self.quant_activation_2 = QActivation(a_bit)
-        self.downsample = downsample
-        self.relu = nn.ReLU(inplace=True)
+        self.quant_conv2 = QConv2d(planes, planes, 3, padding=1, bit=w_bit)
+
+        if stride != 1 or in_planes != planes * PreActBasicBlock.expansion:
+            self.shortcut = nn.Sequential(
+                QConv2d(in_planes, planes * PreActBasicBlock.expansion, 1, stride, bit=w_bit))
 
     def forward(self, x):
-        identity = x
 
-        out = self.quant_conv1(x)
-        out = self.bn1(out)
+        """ Pre Activate Residual Block """
+
+        out = self.bn1(x)
         out = self.relu(out)
         out = self.quant_activation_1(out)
 
-        out = self.quant_conv2(out)
+        shortcut = self.shortcut(out) if hasattr(self, 'shortcut') else x
+        out = self.quant_conv1(out)
+
         out = self.bn2(out)
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-        out += identity
-
         out = self.relu(out)
         out = self.quant_activation_2(out)
+        out = self.quant_conv2(out)
 
+        out += shortcut
         return out
 
 
 class ResNet(nn.Module):
-    def __init__(self, block, layers, num_classes, w_bit=32, a_bit=32):
+    def __init__(self, block, layers, num_classes=1000, w_bit=32, a_bit=32):
         super(ResNet, self).__init__()
 
         self.num_classes = num_classes
@@ -84,28 +86,25 @@ class ResNet(nn.Module):
         if num_classes == 1000:
             self.layer4 = self._make_layer(block, make_layer_param[3], layers[3], stride=2)
 
+        """ last bn and relu for pre-activation """
+        self.last_bn = self.norm_layer(fc_inplain * block.expansion)
+        self.last_relu = nn.ReLU(inplace=True)
+
+
         """ Final Layer doesn't apply quantization """
         self.fc = nn.Linear(fc_inplain * block.expansion, num_classes)
 
 
-        # TODO
-        """ Init Weight """
-
     def _make_layer(self, block, planes, layer, stride=None):
 
-        downsample = None
         layers = []
 
-        if stride != 1 or self.in_planes != planes * block.expansion:
-            downsample = nn.Sequential(
-                QConv2d(self.in_planes, planes, 1, stride, bit=self.w_bit),
-                nn.BatchNorm2d(planes * block.expansion)
-            )
-        layers.append(block(self.in_planes, planes, stride, downsample, w_bit=self.w_bit, a_bit=self.a_bit))
+        layers.append(block(self.in_planes, planes, stride, w_bit=self.w_bit, a_bit=self.a_bit))
 
         self.in_planes = planes * block.expansion
         for num_block in range(1, layer):
             layers.append(block(self.in_planes, planes, w_bit=self.w_bit, a_bit=self.a_bit))
+            self.in_planes = planes * block.expansion
 
         return nn.Sequential(*layers)
 
@@ -114,17 +113,16 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+
+        # FIXME: maxpooling 버그인가...?
         # if self.num_classes == 1000:
-        #     x = self.maxpooling(x)
+        x = self.maxpooling(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-
-        """ 이미지넷 클래스 개수: 1000 """
-        """ CIFAR10 클래스 갯수: 10 """
-        if self.num_classes == 1000:
-            x = self.layer4(x)
+        # if self.num_classes == 1000:
+        x = self.layer4(x)
 
         x = self.avgpool(x)
         x = torch.flatten(x, 1)
@@ -136,8 +134,8 @@ class ResNet(nn.Module):
         return self._forward_impl(x)
 
 
-def resnet20(pretrained_path=None, **kwargs):
-    resnet = ResNet(BasicBlock, [3, 3, 3], num_classes=10, **kwargs)
+def resnet20(pretrained_path, num_classes, **kwargs):
+    resnet = ResNet(PreActBasicBlock, [3, 3, 3], num_classes=num_classes, **kwargs)
 
     if pretrained_path is not None:
         if not os.path.exists(pretrained_path):
@@ -150,8 +148,8 @@ def resnet20(pretrained_path=None, **kwargs):
     return resnet
 
 
-def resnet18(pretrained_path=None, **kwargs):
-    resnet = ResNet(BasicBlock, [2, 2, 2, 2], num_classes=1000, **kwargs)
+def resnet18(pretrained_path, num_classes, **kwargs):
+    resnet = ResNet(PreActBasicBlock, [2, 2, 2, 2], num_classes=num_classes, **kwargs)
 
     if pretrained_path is not None:
         if not os.path.exists(pretrained_path):
