@@ -12,16 +12,31 @@
       "stream": "ext://sys.stdout"
     },
 
-    "info_file_handler": {
+    "info_model_handler": {
       "class": "logging.FileHandler",
       "level": "DEBUG",
       "formatter": "simple",
-      "filename": "logging.log"
+      "filename": "loss_acc.log"
+      },
+
+    "info_param_handler": {
+      "class": "logging.FileHandler",
+      "level": "DEBUG",
+      "formatter": "simple",
+      "filename": "param.log"
       }
     },
 
-  "root": {
-    "level": "DEBUG",
-    "handlers": ["console", "info_file_handler"]
+  "loggers": {
+    "model-logger": {
+      "level": "DEBUG",
+      "handlers": ["console", "info_model_handler"],
+      "propagate": true
+    },
+    "param-logger": {
+      "level": "DEBUG",
+      "handlers": ["console", "info_param_handler"],
+      "propagate": true
+    }
   }
 }
