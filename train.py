@@ -5,7 +5,7 @@ from torchvision.transforms import transforms as T
 from resnet import resnet20, resnet18
 import torch.optim as optim
 from tqdm import tqdm
-from utils import Hook, interval_param_list, weight_param_list, check_interval_param, graph_prun_ratio
+from utils import Hook, interval_param_list, weight_param_list, check_interval_param, prun_ratio
 from qil import Transformer
 from logger import get_logger
 import argparse
@@ -15,7 +15,6 @@ from torch.nn.parallel import DistributedDataParallel, DataParallel
 import torch.backends.cudnn as cudnn
 import torch.multiprocessing as mp
 import torch.distributed as dist
-
 
 
 """ Logger 등록 """
