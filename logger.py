@@ -18,7 +18,6 @@ def get_logger(save_dir, log_config='./logging.json', level=logging.INFO):
         for _, handler in cfg['handlers'].items():
             if 'filename' in handler:
                 handler['filename'] = f'{save_dir}/{handler["filename"]}'
-        logging.config.dictConfig(cfg)
-        logger = logging.getLogger()
+    logging.config.dictConfig(cfg)
 
-    return logger
+    return logging
