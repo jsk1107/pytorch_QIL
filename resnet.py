@@ -5,6 +5,7 @@ import torch.nn as nn
 from qil import QConv2d, QActivation
 from torchsummary import summary
 import os
+from torch.nn.parallel import DistributedDataParallel, DataParallel
 
 
 class PreActBasicBlock(nn.Module):
@@ -151,14 +152,13 @@ def resnet20(pretrained_path, num_classes, **kwargs):
 def resnet18(pretrained_path, num_classes, **kwargs):
     resnet = ResNet(PreActBasicBlock, [2, 2, 2, 2], num_classes=num_classes, **kwargs)
 
-    if pretrained_path is not None:
-        if not os.path.exists(pretrained_path):
-            print(f'ImageNet FP32 학습 시작')
-            return resnet
-        print(f'load: {kwargs} | {pretrained_path}')
+    checkpoint = torch.load(f'{pretrained_path}')
+    if isinstance(resnet, (DataParallel, DistributedDataParallel)):
+        resnet.module.load_state_dict(checkpoint['state_dict'], strict=False)
+    else:
+        resnet.load_state_dict(checkpoint['state_dict'], strict=False)
+    print('Done checkpoint load')
 
-        checkpoint = torch.load(f'{pretrained_path}')
-        resnet.load_state_dict(checkpoint['state_dict'], strict=True)
     return resnet
 
 
